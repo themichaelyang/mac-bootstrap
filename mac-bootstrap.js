@@ -31,7 +31,18 @@ const createEmptyPromise = () => createPromise((resolve) => resolve())
 
 const isIntegerString = (string) => /^[0-9]*$/.test(string)
 
-const secondsToHours = (hours) => hours * 60 * 60
+// actually checks if is decimal string with optional . leading 0 or 1
+const isDecimalString = (string) => /^[0-1]\d*(\.\d+)?$/.test(string)
+
+const secondsToHours = (hours) => hours.trim() * 60 * 60
+
+const checkColorString = (string) => {
+  let rgb = string.split(' ')
+
+  return rgb.length === 3
+      && rgb.reduce((acc, num) => acc && isDecimalString(num)
+      && parseFloat(num) <= 1.0, true)
+}
 
 // wrap io.question in a Promise
 const promptPromise = (question) => {
@@ -42,9 +53,7 @@ const promptPromise = (question) => {
   })
 }
 
-
-
-const prompt = (name, question) => {
+const prompt = (name, question, commands) => {
   return promptPromise(question).then((answer) => {
     if (answer === '' || answer === 'n') {
       console.log('Skipped.')
@@ -59,7 +68,7 @@ const prompt = (name, question) => {
   })
 }
 
-const handleResponse = (name, question, transformAnswer, validator) => (response) => {
+const handleResponse = (name, question, commands, transformAnswer, validator) => (response) => {
   // console.log(response)
   if (response === false) {
     return
@@ -76,62 +85,84 @@ const handleResponse = (name, question, transformAnswer, validator) => (response
   else {
     console.log('Not a valid input, try again...')
     console.log('')
-    return ask(name, question, transformAnswer, validator)
+    return ask(name, question, commands, transformAnswer, validator)
   }
 }
 
-const ask = (name, question, transformAnswer = (a) => a.trim(), validator = (a) => true) => {
-  return prompt(name, question)
-         .then(handleResponse(name, question, transformAnswer, validator))
+const ask = (name, question, commands, transformAnswer = (a) => a.trim(), validator = (a) => true) => {
+  return prompt(name, question, commands)
+         .then(handleResponse(name, question, commands, transformAnswer, validator))
 }
 
-const commands = {
-  'computer-name': {
-    prompt: 'Set computer name: ',
-    cmd:
+// could try to use async / await?
+const runSetup = (setupOrder, commands) => {
+  // sequentially execute async asks
+  setupOrder.reduce((acc, name) => {
+    return acc.then(() => ask(name, commands[name].prompt, commands,
+                              commands[name].transform, commands[name].validate))
+  }, createEmptyPromise())
+  .catch((err) => {
+    console.log('Error! :-(')
+    console.log(err)
+  })
+}
+
+const main = () => {
+
+  const commands = {
+    'set-computer-name': {
+      prompt: 'Set computer name: ',
+      cmd:
 `# Set computer name (as done via System Preferences → Sharing)
 scutil --set ComputerName "{value}"
 scutil --set HostName "{value}"
 sudo scutil --set LocalHostName "{value}"
 sudo defaults write /Library/Preferences/SystemConfiguration/com.apple.smb.server NetBIOSName -string "{value}"`
-  },
+    },
 
-  'standby-delay': {
-    prompt: 'Set standby delay (in hours): ',
-    cmd:
+    'set-standby-delay': {
+      prompt: 'Set standby delay (in hours): ',
+      cmd:
 `# Set standby delay (default is 1 hour)
 sudo pmset -a standbydelay {value}`,
-    transform: secondsToHours,
-    validate: isIntegerString
-  },
+      transform: secondsToHours,
+      validate: isIntegerString
+    },
 
-  'disable-boot-sound': {
-    prompt: 'Disable sound effects on boot? (y/n): ',
-    cmd:
+    'disable-boot-sound': {
+      prompt: 'Disable sound effects on boot? (y/n): ',
+      cmd:
 `# Disable the sound effects on boot
 sudo nvram SystemAudioVolume=" "`
-  }
-}
+    },
 
-const main = () => {
+    'disable-transparency': {
+      prompt: 'Disable transparency in the ui? (y/n): ',
+      cmd:
+`# Disable transparency in the menu bar and elsewhere
+defaults write com.apple.universalaccess reduceTransparency -bool true`
+    },
+
+    'set-hightlight-color': {
+      prompt: 'Set highlight color (input RGB as three space separated floats between 0.0 to 1.0): ',
+      cmd:
+`# Set highlight color to green
+defaults write NSGlobalDomain AppleHighlightColor -string "{value}"`,
+      validate: checkColorString
+    }
+  }
 
   console.log('Welcome to the .macos bootstrapping tool!')
   console.log('This tool will help you create a .macos file similar to: https://mths.be/macos')
   console.log('If you ever want to skip a step of the config, just hit return without entering any input (or enter "n").')
 
-  // ask('computer-name', 'Set computer name: ')
-  // .then(() => ask('standby-delay', 'Set standby delay (in hours): ',
-        // secondsToHours, isIntegerString))
-  // .then(() => ask('disable-boot-sound', 'Disable sound effects on boot? (y/n): '))
+  const setupOrder = ['set-computer-name',
+                      'set-standby-delay',
+                      'disable-boot-sound',
+                      'disable-transparency',
+                      'set-hightlight-color']
 
-  const setupOrder = ['computer-name',
-                      'standby-delay',
-                      'disable-boot-sound']
-
-  // sequentially execute async asks
-  setupOrder.reduce((acc, name) => {
-    return acc.then(() => ask(name, commands[name].prompt))
-  }, createEmptyPromise())
+  runSetup(setupOrder, commands)
 }
 
 main()
